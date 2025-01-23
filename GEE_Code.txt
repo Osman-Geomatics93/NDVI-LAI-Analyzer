@@ -1,0 +1,324 @@
+// Time range setup
+var startDate = ee.Date('2019-11-10');
+var endDate = ee.Date('2020-04-20');
+
+// Load Sentinel-2 data
+var s2 = ee.ImageCollection('COPERNICUS/S2_SR')
+  .filterBounds(studyArea)
+  .filterDate(startDate, endDate)
+  .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 20));
+
+// Calculate indices function
+function calculateIndices(image) {
+  var nir = image.select('B8');
+  var red = image.select('B4');
+  var ndvi = nir.subtract(red).divide(nir.add(red)).rename('NDVI');
+  var lai = ndvi.expression(
+    '-(1/0.7) * log(1 - ((NDVI - 0.15) / 0.95))',
+    {'NDVI': ndvi}
+  ).rename('LAI');
+  return image.addBands(ndvi).addBands(lai);
+}
+
+var withIndices = s2.map(calculateIndices);
+var meanLAI = withIndices.select('LAI').mean().clip(studyArea);
+var meanNDVI = withIndices.select('NDVI').mean().clip(studyArea);
+
+// Enhanced visualization parameters
+var laiVis = {
+  min: 0,
+  max: 6,
+  palette: [
+    '#1A237E', // Very Low
+    '#0D47A1', // Low
+    '#2E7D32', // Moderate
+    '#43A047', // High
+    '#76FF03'  // Very High
+  ]
+};
+
+var ndviVis = {
+  min: -1,
+  max: 1,
+  palette: [
+    '#D32F2F', // Water/No Vegetation
+    '#FF5722', // Very Low
+    '#FFB300', // Low
+    '#4CAF50', // Moderate
+    '#1B5E20'  // High
+  ]
+};
+
+// Initialize map
+Map.centerObject(studyArea, 10);
+Map.addLayer(meanNDVI, ndviVis, 'NDVI');
+Map.addLayer(meanLAI, laiVis, 'LAI');
+
+// Create enhanced legend
+var legend = ui.Panel({
+  style: {
+    position: 'bottom-right',
+    padding: '8px 15px',
+    backgroundColor: 'rgba(255, 255, 255, 0.9)',
+    border: '2px solid #ccc'
+  }
+});
+
+function addLegendEntry(parent, title, entries) {
+  parent.add(ui.Label(title, {
+    fontWeight: 'bold',
+    fontSize: '14px',
+    margin: '10px 0 5px 0',
+    color: '#1A237E'
+  }));
+  
+  entries.forEach(function(entry) {
+    parent.add(ui.Panel([
+      ui.Label({
+        style: {
+          backgroundColor: entry.color,
+          padding: '8px',
+          margin: '0 5px 0 0',
+          minWidth: '24px',
+          border: '1px solid #999'
+        }
+      }),
+      ui.Label(entry.label, {fontSize: '12px'})
+    ], ui.Panel.Layout.Flow('horizontal')));
+  });
+}
+
+// Legend entries
+var laiEntries = [
+  {color: laiVis.palette[0], label: 'Very Low (0-1.2)'},
+  {color: laiVis.palette[1], label: 'Low (1.2-2.4)'},
+  {color: laiVis.palette[2], label: 'Moderate (2.4-3.6)'},
+  {color: laiVis.palette[3], label: 'High (3.6-4.8)'},
+  {color: laiVis.palette[4], label: 'Very High (4.8-6.0)'}
+];
+
+var ndviEntries = [
+  {color: ndviVis.palette[0], label: 'Water/No Veg (-1 to -0.5)'},
+  {color: ndviVis.palette[1], label: 'Very Low (-0.5 to 0)'},
+  {color: ndviVis.palette[2], label: 'Low (0 to 0.3)'},
+  {color: ndviVis.palette[3], label: 'Moderate (0.3 to 0.6)'},
+  {color: ndviVis.palette[4], label: 'High (0.6 to 1.0)'}
+];
+
+addLegendEntry(legend, 'LAI', laiEntries);
+addLegendEntry(legend, 'NDVI', ndviEntries);
+Map.add(legend);
+
+// Enhanced time series chart
+var timeChart = ui.Chart.image.series({
+  imageCollection: withIndices.select(['LAI', 'NDVI']),
+  region: studyArea,
+  reducer: ee.Reducer.mean(),
+  scale: 30
+})
+.setChartType('ScatterChart')
+.setOptions({
+  title: 'Vegetation Indices Time Series Analysis',
+  titleTextStyle: {
+    fontSize: 20,
+    fontFamily: 'Roboto',
+    bold: true,
+    color: '#1A237E'
+  },
+  interpolateNulls: true,
+  curveType: 'function',
+  pointSize: 3,
+  lineWidth: 2.5,
+  vAxes: {
+    0: {
+      title: 'Leaf Area Index (LAI)',
+      baseline: 0,
+      viewWindow: {min: 0, max: 6},
+      gridlines: {count: 6, color: '#F5F5F5'},
+      titleTextStyle: {color: '#2E7D32', bold: true, fontSize: 14}
+    },
+    1: {
+      title: 'NDVI',
+      baseline: 0,
+      viewWindow: {min: -1, max: 1},
+      gridlines: {count: 8, color: '#F5F5F5'},
+      titleTextStyle: {color: '#1565C0', bold: true, fontSize: 14}
+    }
+  },
+  hAxis: {
+    title: 'Time Period',
+    format: 'MMM yyyy',
+    gridlines: {count: 12},
+    titleTextStyle: {color: '#424242', bold: true, fontSize: 14}
+  },
+  series: {
+    0: {
+      targetAxisIndex: 0,
+      color: '#43A047',
+      pointShape: 'circle',
+      lineWidth: 3
+    },
+    1: {
+      targetAxisIndex: 1,
+      color: '#1E88E5',
+      pointShape: 'circle',
+      lineWidth: 3
+    }
+  },
+  chartArea: {
+    width: '85%',
+    height: '80%',
+    backgroundColor: {
+      fill: '#FFFFFF'
+    }
+  },
+  backgroundColor: {
+    fill: '#FAFAFA'
+  },
+  legend: {
+    position: 'top',
+    textStyle: {
+      fontSize: 13,
+      fontFamily: 'Roboto',
+      color: '#424242'
+    }
+  },
+  crosshair: {
+    trigger: 'both',
+    orientation: 'both'
+  },
+  explorer: {
+    actions: ['dragToZoom', 'rightClickToReset'],
+    axis: 'horizontal',
+    keepInBounds: true,
+    maxZoomIn: 0.1
+  },
+  animation: {
+    duration: 1200,
+    easing: 'out',
+    startup: true
+  }
+});
+
+print(timeChart);
+
+// Create download panel
+var downloadPanel = ui.Panel({
+  style: {
+    position: 'top-right',
+    padding: '10px',
+    backgroundColor: 'rgba(255, 255, 255, 0.9)'
+  }
+});
+
+// Download NDVI Map
+var downloadNDVIMap = ui.Button({
+  label: '📥 Download NDVI Map',
+  onClick: function() {
+    Export.image.toDrive({
+      image: meanNDVI,
+      description: 'NDVI_Map_' + startDate.format('YYYY-MM-dd').getInfo(),
+      folder: 'GEE_Vegetation_Analysis',
+      scale: 10,
+      region: studyArea,
+      maxPixels: 1e13,
+      fileFormat: 'GeoTIFF'
+    });
+    print('⬇️ NDVI map export task created');
+  },
+  style: {margin: '5px 0', color: '#1565C0'}
+});
+
+// Download LAI Map
+var downloadLAIMap = ui.Button({
+  label: '📥 Download LAI Map',
+  onClick: function() {
+    Export.image.toDrive({
+      image: meanLAI,
+      description: 'LAI_Map_' + startDate.format('YYYY-MM-dd').getInfo(),
+      folder: 'GEE_Vegetation_Analysis',
+      scale: 10,
+      region: studyArea,
+      maxPixels: 1e13,
+      fileFormat: 'GeoTIFF'
+    });
+    print('⬇️ LAI map export task created');
+  },
+  style: {margin: '5px 0', color: '#2E7D32'}
+});
+
+// Download Time Series Data
+var downloadChartData = ui.Button({
+  label: '📊 Download Chart Data',
+  onClick: function() {
+    var timeSeriesData = withIndices
+      .select(['LAI', 'NDVI'])
+      .map(function(image) {
+        return image.set('date', image.date().format('YYYY-MM-dd'));
+      });
+    
+    Export.table.toDrive({
+      collection: timeSeriesData,
+      description: 'Vegetation_TimeSeries_' + startDate.format('YYYY-MM-dd').getInfo(),
+      folder: 'GEE_Vegetation_Analysis',
+      fileFormat: 'CSV',
+      selectors: ['date', 'LAI', 'NDVI']
+    });
+    print('📊 Time series data export task created');
+  },
+  style: {margin: '5px 0', color: '#7B1FA2'}
+});
+
+// Download All
+var downloadAllData = ui.Button({
+  label: '📦 Download All Data',
+  onClick: function() {
+    downloadNDVIMap.onClick();
+    downloadLAIMap.onClick();
+    downloadChartData.onClick();
+    print('📦 All export tasks created');
+  },
+  style: {
+    margin: '10px 0',
+    color: '#C62828',
+    fontWeight: 'bold'
+  }
+});
+
+// Add elements to download panel
+downloadPanel.add(ui.Label('Download Options', {
+  fontWeight: 'bold',
+  fontSize: '14px',
+  margin: '0 0 10px 0',
+  color: '#1A237E'
+}));
+downloadPanel.add(downloadNDVIMap);
+downloadPanel.add(downloadLAIMap);
+downloadPanel.add(downloadChartData);
+downloadPanel.add(ui.Label('', {margin: '5px 0'}));
+downloadPanel.add(downloadAllData);
+
+// Layer controls
+var layerSelect = ui.Select({
+  items: ['Both', 'NDVI Only', 'LAI Only'],
+  value: 'Both',
+  onChange: function(selected) {
+    Map.layers().reset();
+    if (selected === 'Both' || selected === 'NDVI Only') {
+      Map.addLayer(meanNDVI, ndviVis, 'NDVI');
+    }
+    if (selected === 'Both' || selected === 'LAI Only') {
+      Map.addLayer(meanLAI, laiVis, 'LAI');
+    }
+  },
+  style: {margin: '10px 0'}
+});
+
+var controlPanel = ui.Panel([
+  ui.Label('Layer Display:', {fontWeight: 'bold', margin: '0 8px 0 0'}),
+  layerSelect
+], ui.Panel.Layout.Flow('horizontal'));
+
+// Add all panels to map
+Map.add(downloadPanel);
+Map.add(controlPanel);
